@@ -4,7 +4,7 @@ import requests
 import json
 import secrets 
 
-url = "https://www.worldwildlife.org/"
+url = "https://www.worldwildlife.org"
 response = requests.get(url)
 soup = BeautifulSoup(response.text, "html.parser")
 
@@ -129,6 +129,7 @@ def make_request_with_cache(baseurl, params={}):
         save_cache(CACHE_DICT)
         return CACHE_DICT[request_key]
 #finish building cache 
+
 class WWFSite:
     '''a national site
 
@@ -136,8 +137,7 @@ class WWFSite:
     -------------------
     add docstring!!!
     '''
-    def __init__(self, category, name, status, description, scientific_name, weight, length, habitats):
-        self.category = category
+    def __init__(self, name, status, description, scientific_name, weight, length, habitats):
         self.name = name
         self.status = status
         self.description = description
@@ -147,3 +147,151 @@ class WWFSite:
         self.habitats = habitats
     def info(self):
         return "{} ({}): The species living in {} is {}.".format(self.name, self.scientific_name, self.habitats, self.status)
+
+def build_state_url_dict():
+    ''' Make a dictionary that maps state name to state page url from "https://www.nps.gov"
+
+    Parameters
+    ----------
+    None
+
+    Returns
+    -------
+    dict
+        key is a state name and value is the url
+        e.g. {'michigan':'https://www.nps.gov/state/mi/index.htm', ...}
+    '''
+    species_url_dic = {}
+    species_list = []
+    url_list = []
+    searching_div = soup.find(id = 'content')
+
+    child_divs = searching_div.find_all('ul', class_='masonry')
+    for c_div in child_divs:
+        c_link = c_div.find_all('a')
+        for header in c_link:
+            species_name = header.text
+            species_list.append(species_name.lower())
+        for link in c_link:
+            c_path = link['href']
+            url_path = 'https://www.worldwildlife.org' + c_path
+            url_list.append(url_path)
+    species_url_dic = {species_list[i]: url_list[i] for i in range(len(species_list))} 
+    return species_url_dic
+
+def get_site_instance(site_url):
+    '''Make an instances from a national site URL.
+    
+    Parameters
+    ----------
+    site_url: string
+        The URL for a national site page in nps.gov
+    
+    Returns
+    -------
+    instance
+        a national site instance
+    '''
+    response = requests.get(site_url)
+    response = make_request_with_cache(site_url)
+    soup = BeautifulSoup(response, "html.parser")
+
+    try:
+        species_name = soup.find('li', class_='current').text.strip()
+    except:
+        species_name = 'No Name'
+
+    try:
+        species_status = soup.find('div', class_='container').text.strip()
+    except:
+        species_status = 'No Status'
+
+    try:
+        species_description = soup.find('div', class_='wysiwyg lead').text.strip()
+    except:
+        species_description = 'No Description'
+
+    try: 
+        species_scientific_name = soup.find('em').text.strip()
+    except: 
+        species_scientific_name = 'No Scientific Name'
+
+    try:
+        species_weight = soup.find('div', class_='container').text.strip()
+    except:
+        species_weight = 'No Weight'
+
+    try:
+        species_length = soup.find('div', class_='container').text.strip()
+    except:
+        species_length = 'No Length'  
+
+    try:
+        species_habitats = soup.find('div', class_='container').text.strip()
+    except:
+        species_habitats = 'No Habitat'
+
+    instance_species_site = WWFSite(species_name, species_status, species_description, species_scientific_name, species_weight, species_length, species_habitats)
+    return instance_species_site
+# what if the class names are the same across different search items 
+
+#populate database
+
+import sqlite3
+
+db_name = 'goodreads_reviews_title.sqlite'
+
+def create_db():
+    conn = sqlite3.connect(db_name)
+    cur = conn.cursor()
+    
+    drop_reviews = '''
+        DROP TABLE IF EXISTS "Reviews";
+    '''
+
+    create_reviews_sql = '''
+        CREATE TABLE IF NOT EXISTS 'Reviews'(
+            "Id" INTEGER PRIMARY KEY AUTOINCREMENT,
+            "Title" TEXT NOT NULL,
+            "publicationYear" INTEGER NOT NULL,
+            "Country" TEXT NOT NULL,
+            "reviewsCount" INTEGER NOT NULL,
+            "ratingsSum" INTEGER NOT NULL,
+            "ratingsCount" INTEGER NOT NULL
+        )
+    '''
+    cur.execute(drop_reviews)
+    cur.execute(create_reviews_sql)
+
+    conn.commit()
+    conn.close()
+
+# create_db()
+
+def load_reviews():
+    base_url = 'https://www.goodreads.com/book/title.json'
+    reviews = requests.get(base_url, auth=oauth).json()
+
+    insert_sql = '''
+        INSERT INTO Reviews
+        VALUES (NULL, ?, ?, ?, ?, ?, ?)
+    '''
+    conn = sqlite3.connect(db_name)
+    cur = conn.cursor()
+
+    for review in reviews:
+        cur.execute(insert_sql,
+            [
+                review['title'],
+                review['original_publication_year'],
+                review['country_code'],
+                review['reviews_count'],
+                review['ratings_sum'],
+                review['ratings_count']
+            ]
+        )
+    conn.commit()
+    conn.close()
+
+create_db()
+load_reviews()
